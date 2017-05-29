@@ -81,22 +81,37 @@ function testNoHops(loggedKeyspace, table, expectedSourcesLength, done) {
   });
   var query = util.format('INSERT INTO %s (id, name) VALUES (?, ?)', table);
   var queryOptions = { traceQuery: true, prepare: true, consistency: types.consistencies.all };
+  var results = [];
   utils.timesLimit(50, 16, function (n, timesNext) {
     var params = [ n, n ];
     client.execute(query, params, queryOptions, function (err, result) {
       assert.ifError(err);
       getTrace(client, result.info.traceId, function (err, trace) {
         assert.ifError(err);
-        // Check where the events are coming from
-        var sources = {};
-        trace.events.forEach(function (event) {
-          sources[helper.lastOctetOf(event['source'].toString())] = true;
-        });
-        assert.strictEqual(Object.keys(sources).length, expectedSourcesLength);
+        results.push(trace);
         timesNext();
       });
     });
-  }, helper.finish(client, done));
+  }, function loopEnd() {
+    client.shutdown();
+    // Check where the events are coming from
+    results.forEach(function (trace) {
+      var sources = {};
+      trace.events.forEach(function (event) {
+        sources[helper.lastOctetOf(event['source'].toString())] = true;
+      });
+      if (Object.keys(sources).length !== expectedSourcesLength) {
+        console.log('----- length mismatch START!');
+        console.log(util.inspect(trace), { depth: null });
+        console.log('----- length mismatch END!');
+        console.log('----- REST OF THE TRACES START');
+        console.log(util.inspect(results), { depth: null });
+        console.log('----- REST OF THE TRACES END');
+      }
+      assert.strictEqual(Object.keys(sources).length, expectedSourcesLength);
+    });
+    done();
+  });
 }
 
 /**
@@ -114,6 +129,7 @@ function testAllReplicasAreUsedAsCoordinator(loggedKeyspace, table, expectedRepl
   });
   var query = util.format('INSERT INTO %s (id, name) VALUES (?, ?)', table);
   var queryOptions = { traceQuery: true, prepare: true, consistency: types.consistencies.all };
+  var results = [];
   utils.timesSeries(10, function (i, nextParameters) {
     var params = [ i, i ];
     var coordinators = {};
@@ -137,11 +153,21 @@ function testAllReplicasAreUsedAsCoordinator(loggedKeyspace, table, expectedRepl
       });
     }, function (err) {
       assert.ifError(err);
-      assert.strictEqual(Object.keys(replicas).length, expectedReplicas);
-      assert.deepEqual(Object.keys(replicas).sort(), Object.keys(coordinators).sort());
+      results.push({
+        replicas: replicas,
+        coordinators: coordinators
+      });
       nextParameters();
     });
-  }, helper.finish(client, done));
+  }, function () {
+    client.shutdown();
+    results.forEach(function (item) {
+      assert.strictEqual(Object.keys(item.replicas).length, expectedReplicas);
+      assert.deepEqual(Object.keys(item.replicas).sort(), Object.keys(item.coordinators).sort(),
+        'All replicas should be used as coordinators');
+    });
+    done();
+  });
 }
 
 /**
