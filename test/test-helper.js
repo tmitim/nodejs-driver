@@ -823,31 +823,32 @@ Ccm.prototype.waitForUp = function (callback) {
     return !started && retryCount < 60;
   }, function iterator (next) {
     var nodesTested = 0;
-    var ping = true;
+    var ping = false;
     utils.whilst(function () {
       return nodesTested < self.nodeLength;
     }, function pingNodes (nextIp) {
       var pingIp = '127.0.0.' + (nodesTested + 1);
       helper.trace('Attempt to ping ' + pingIp);
       nodesTested++;
-      var conn = net.createConnection(9042, pingIp)
+      net.createConnection(9042, pingIp)
         .on('error', function() {
-          ping = false;
+          if (ping) {
+            return;
+          }
           nextIp();
         })
         .on('connect', function() {
-          ping = ping && true;
-          conn.end();
+          ping = true;
           nextIp();
         });
     }, function () {
       retryCount++;
-      if (!ping) {
-        //wait 1 sec between retries
-        return setTimeout(next, 1000);
+      if (ping) {
+        started = true;
+        return next();
       }
-      started = true;
-      return next();
+      //wait 1 sec between retries
+      return setTimeout(next, 1000);
     });
   }, callback);
 };
